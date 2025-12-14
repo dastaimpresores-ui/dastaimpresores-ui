@@ -80,11 +80,13 @@ export const generateAudio = async (
   text: string,
   settings: TtsSettings
 ): Promise<string> => {
-  if (!process.env.API_KEY) {
-    throw new Error("API Key no encontrada. Asegúrate de tener la variable de entorno configurada.");
+  const apiKey = import.meta.env.VITE_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("API Key no encontrada. Configurá VITE_API_KEY en Netlify.");
   }
 
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = new GoogleGenAI({ apiKey });
   
   const selectedVoice = VOICES.find(v => v.id === settings.voiceId) || VOICES[0];
   

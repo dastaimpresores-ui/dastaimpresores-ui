@@ -1,4 +1,3 @@
-import { GoogleGenAI, Modality } from "@google/genai";
 import { TtsSettings } from "../types";
 import { VOICES } from "../constants";
 import { mixAudioTracks } from "./audioMixer";
@@ -14,7 +13,11 @@ const base64ToUint8Array = (base64: string): Uint8Array => {
 };
 
 // Add WAV header to raw PCM data so browsers can play it
-const pcmToWav = (pcmData: Uint8Array, sampleRate: number = 24000, numChannels: number = 1): Blob => {
+const pcmToWav = (
+  pcmData: Uint8Array,
+  sampleRate: number = 24000,
+  numChannels: number = 1
+): Blob => {
   const headerLength = 44;
   const byteLength = pcmData.length + headerLength;
   const buffer = new ArrayBuffer(byteLength);
@@ -27,16 +30,16 @@ const pcmToWav = (pcmData: Uint8Array, sampleRate: number = 24000, numChannels: 
   };
 
   // RIFF identifier
-  writeString(0, 'RIFF');
+  writeString(0, "RIFF");
   // file length
   view.setUint32(4, 36 + pcmData.length, true);
   // RIFF type
-  writeString(8, 'WAVE');
+  writeString(8, "WAVE");
   // format chunk identifier
-  writeString(12, 'fmt ');
+  writeString(12, "fmt ");
   // format chunk length
   view.setUint32(16, 16, true);
-  // sample format (raw)
+  // sample format (PCM)
   view.setUint16(20, 1, true);
   // channel count
   view.setUint16(22, numChannels, true);
@@ -49,7 +52,7 @@ const pcmToWav = (pcmData: Uint8Array, sampleRate: number = 24000, numChannels: 
   // bits per sample
   view.setUint16(34, 16, true);
   // data chunk identifier
-  writeString(36, 'data');
+  writeString(36, "data");
   // data chunk length
   view.setUint32(40, pcmData.length, true);
 
@@ -57,7 +60,7 @@ const pcmToWav = (pcmData: Uint8Array, sampleRate: number = 24000, numChannels: 
   const pcmView = new Uint8Array(buffer, headerLength);
   pcmView.set(pcmData);
 
-  return new Blob([buffer], { type: 'audio/wav' });
+  return new Blob([buffer], { type: "audio/wav" });
 };
 
 const getSpeedDescription = (speed: number) => {
@@ -80,67 +83,54 @@ export const generateAudio = async (
   text: string,
   settings: TtsSettings
 ): Promise<string> => {
-  const apiKey = import.meta.env.VITE_API_KEY;
+  const selectedVoice = VOICES.find((v) => v.id === settings.voiceId) || VOICES[0];
 
-  if (!apiKey) {
-    throw new Error("API Key no encontrada. Configurá VITE_API_KEY en Netlify.");
-  }
-
-  const ai = new GoogleGenAI({ apiKey });
-  
-  const selectedVoice = VOICES.find(v => v.id === settings.voiceId) || VOICES[0];
-  
-  // Enhanced prompt to force character acting
   const promptText = `
-    Eres un actor de voz profesional. Tu tarea es generar un audio leyendo el siguiente texto.
-    
-    CONFIGURACIÓN DE PERSONAJE (MUY IMPORTANTE):
-    - ${selectedVoice.styleDescription}
-    
-    CONFIGURACIÓN TÉCNICA:
-    - Idioma/Acento: Español (${settings.accent}).
-    - Emoción/Estilo: ${settings.style}.
-    - Velocidad: ${getSpeedDescription(settings.speed)}.
-    - Tono base: ${getPitchDescription(settings.pitch)}.
-    
-    INSTRUCCIONES DE ACTUACIÓN:
-    - Interpreta fielmente las etiquetas en el texto para generar sonidos no verbales.
-    - Etiquetas soportadas: [pausa], [risa], [grito], [llanto], [suspiro], [tos], [carraspera], [bostezo], [respiracion], [beso], [silbido], [chasquido], [estornudo], [tarareo].
-    - Si el personaje es un niño, suena infantil. Si es terror, suena aterrador.
-    
-    TEXTO A LEER:
-    "${text}"
-  `;
+Eres un actor de voz profesional. Tu tarea es generar un audio leyendo el siguiente texto.
+
+CONFIGURACIÓN DE PERSONAJE (MUY IMPORTANTE):
+- ${selectedVoice.styleDescription}
+
+CONFIGURACIÓN TÉCNICA:
+- Idioma/Acento: Español (${settings.accent}).
+- Emoción/Estilo: ${settings.style}.
+- Velocidad: ${getSpeedDescription(settings.speed)}.
+- Tono base: ${getPitchDescription(settings.pitch)}.
+
+INSTRUCCIONES DE ACTUACIÓN:
+- Interpreta fielmente las etiquetas en el texto para generar sonidos no verbales.
+- Etiquetas soportadas: [pausa], [risa], [grito], [llanto], [suspiro], [tos], [carraspera], [bostezo], [respiracion], [beso], [silbido], [chasquido], [estornudo], [tarareo].
+- Si el personaje es un niño, suena infantil. Si es terror, suena aterrador.
+
+TEXTO A LEER:
+"${text}"
+`.trim();
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: promptText }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        // Pass the seed for deterministic output (same seed + same input = same audio)
+    // ✅ Llama a Netlify Function (la API key queda en el servidor, NO en el navegador)
+    const res = await fetch("/.netlify/functions/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        promptText,
         seed: settings.seed,
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: selectedVoice.geminiVoiceName },
-          },
-        },
-      },
+        // (opcional futuro) voiceName: selectedVoice.geminiVoiceName
+      }),
     });
 
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-
-    if (!base64Audio) {
-      const textResponse = response.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (textResponse) {
-        console.error("Model refused to generate audio:", textResponse);
-        throw new Error("El modelo no generó audio, respondió con texto: " + textResponse);
-      }
-      throw new Error("No se generó audio en la respuesta de la API.");
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "");
+      throw new Error(`Error Function TTS (${res.status}): ${msg || "sin detalle"}`);
     }
 
-    const pcmData = base64ToUint8Array(base64Audio);
-    const speechBlob = pcmToWav(pcmData, 24000); 
+    const data = (await res.json()) as { audioB64?: string; mimeType?: string; error?: string };
+
+    if (!data.audioB64) {
+      throw new Error(data.error || "No se generó audio en la respuesta de la Function.");
+    }
+
+    const pcmData = base64ToUint8Array(data.audioB64);
+    const speechBlob = pcmToWav(pcmData, 24000);
     const speechUrl = URL.createObjectURL(speechBlob);
 
     // If background sound is selected, mix it
@@ -149,7 +139,6 @@ export const generateAudio = async (
     }
 
     return speechUrl;
-
   } catch (error) {
     console.error("Error generating speech:", error);
     throw error;

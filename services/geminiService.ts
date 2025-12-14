@@ -114,7 +114,7 @@ TEXTO A LEER:
       body: JSON.stringify({
         promptText,
         seed: settings.seed,
-        // (opcional futuro) voiceName: selectedVoice.geminiVoiceName
+        voiceName: selectedVoice.geminiVoiceName,
       }),
     });
 

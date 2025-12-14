@@ -1,7 +1,6 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 
-export const handler = async (event) => {
-  // CORS básico
+export async function handler(event) {
   const cors = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type",
@@ -16,24 +15,25 @@ export const handler = async (event) => {
     return { statusCode: 405, headers: cors, body: "Method Not Allowed" };
   }
 
-  if (!process.env.GEMINI_API_KEY) {
-    return { statusCode: 500, headers: cors, body: "Missing GEMINI_API_KEY" };
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return { statusCode: 500, headers: cors, body: JSON.stringify({ error: "Missing GEMINI_API_KEY" }) };
   }
 
-  let body = {};
+  let payload = {};
   try {
-    body = JSON.parse(event.body || "{}");
+    payload = JSON.parse(event.body || "{}");
   } catch {
-    return { statusCode: 400, headers: cors, body: "Invalid JSON" };
+    return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "Invalid JSON" }) };
   }
 
-  const { promptText, seed } = body;
+  const { promptText = "", seed, voiceName } = payload;
 
   if (!promptText) {
-    return { statusCode: 400, headers: cors, body: "Missing promptText" };
+    return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "Missing promptText" }) };
   }
 
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const ai = new GoogleGenAI({ apiKey });
 
   const resp = await ai.models.generateContent({
     model: "gemini-2.5-flash-preview-tts",
@@ -41,26 +41,31 @@ export const handler = async (event) => {
     config: {
       responseModalities: [Modality.AUDIO],
       seed: seed ?? undefined,
+      ...(voiceName
+        ? {
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName },
+              },
+            },
+          }
+        : {}),
     },
   });
 
   const parts = resp?.candidates?.[0]?.content?.parts || [];
-  const audioInline = parts.find((p) => p?.inlineData?.data)?.inlineData;
+  const audioPart = parts.find((p) => p?.inlineData?.data);
 
-  if (!audioInline?.data) {
-    return {
-      statusCode: 500,
-      headers: cors,
-      body: JSON.stringify({ error: "No audio returned", parts }),
-    };
+  if (!audioPart?.inlineData?.data) {
+    return { statusCode: 500, headers: cors, body: JSON.stringify({ error: "No audio returned", raw: resp }) };
   }
 
   return {
     statusCode: 200,
     headers: { ...cors, "Content-Type": "application/json" },
     body: JSON.stringify({
-      audioB64: audioInline.data,
-      mimeType: audioInline.mimeType || "audio/pcm",
+      audioB64: audioPart.inlineData.data,
+      mimeType: audioPart.inlineData.mimeType || "audio/pcm",
     }),
   };
-};
+}
